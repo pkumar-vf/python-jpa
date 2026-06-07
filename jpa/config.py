@@ -80,8 +80,6 @@ def _load_and_interpolate_yaml(file_path: Path) -> dict[str, Any]:
     return _as_dict(loaded, context=str(file_path))
 
 
-
-
 class ConfigSettings:
     def __init__(self):
         # 1. Bootstrap: Read the master settings.yml to find the active profile
@@ -103,16 +101,20 @@ class ConfigSettings:
         self.mongo_uri = mongodb_config.get("uri")
         self.database_name = mongodb_config.get("database")
 
-        if not isinstance(self.mongo_uri, str) or not self.mongo_uri or not isinstance(self.database_name, str) or not self.database_name:
-            raise KeyError(f"Invalid configuration format in {profile_filename}. Missing 'mongodb.uri' or 'mongodb.database'.")
+        if not isinstance(self.mongo_uri, str) or not self.mongo_uri or not isinstance(self.database_name,
+                                                                                       str) or not self.database_name:
+            raise KeyError(
+                f"Invalid configuration format in {profile_filename}. Missing 'mongodb.uri' or 'mongodb.database'.")
 
         framework_config = _as_dict(self._config_data.get("framework"), context=f"{profile_filename}.framework")
-        framework_logging_config = _as_dict(framework_config.get("logging"), context=f"{profile_filename}.framework.logging")
+        framework_logging_config = _as_dict(framework_config.get("logging"),
+                                            context=f"{profile_filename}.framework.logging")
         self.framework_config = framework_config
         self.framework_logs_enabled = bool(framework_logging_config.get("enabled", False))
         self.framework_log_level = _parse_log_level(str(framework_logging_config.get("level", "INFO")))
         self.framework_log_format = str(framework_logging_config.get("format", DEFAULT_FRAMEWORK_LOG_FORMAT))
-        self.framework_log_date_format = str(framework_logging_config.get("date_format", DEFAULT_FRAMEWORK_LOG_DATE_FORMAT))
+        self.framework_log_date_format = str(
+            framework_logging_config.get("date_format", DEFAULT_FRAMEWORK_LOG_DATE_FORMAT))
 
 
 def _configure_framework_logger() -> logging.Logger:
@@ -150,35 +152,10 @@ db = _mongo_client[settings.database_name]
 framework_logger.debug("Mongo client initialized for database [%s]", settings.database_name)
 
 
-class ConfigPropertyDescriptor:
-    """Internal helper that extracts nested values from the configuration dictionary at runtime."""
-
-    def __init__(self, path: str, default: Any = None):
-        self.path = path
-        self.default = default
-
-    def __get__(self, instance: Any, owner: Any) -> Any:
-        # If called from the class level (e.g., BookingRepository.mongo_db_name), return descriptor
-        if instance is None:
-            return self
-
-        # Break apart dot-notation strings like "app.mongo.dbname"
-        keys = self.path.split(".")
-        # Pull live parsed dictionary payload from our system settings singleton
-        current_node = settings._config_data
-
-        for key in keys:
-            if isinstance(current_node, dict) and key in current_node:
-                current_node = current_node[key]
-            else:
-                return self.default
-        return current_node
-
-
 def value(place_holder: str) -> Any:
     """
-    Spring Boot-inspired property extraction configuration tool.
-    Validates formatting syntax and routes lookups directly to the settings configuration dictionary.
+    Spring Boot-inspired property extraction tool.
+    Always extracts and returns the raw value immediately from the active configuration sheet.
     """
     # 1. Enforce your validation constraint
     if place_holder.startswith("${") and not place_holder.endswith("}"):
@@ -188,10 +165,10 @@ def value(place_holder: str) -> Any:
     if place_holder.startswith("${") and place_holder.endswith("}"):
         raw_content = place_holder[2:-1]  # Strip '${' and '}'
 
-        # Support default fallbacks split by a colon (e.g., ${app.mongo.dbname:jpa_db})
+        # Support default fallbacks split by a colon (e.g., ${mongodb.uri:mongodb://localhost})
         if ":" in raw_content:
             path, default_val = raw_content.split(":", 1)
-            # Basic type-casting handling for primitives
+            # Basic primitive type-casting
             if default_val.isdigit():
                 default_val = int(default_val)
             elif default_val.lower() == "true":
@@ -201,12 +178,21 @@ def value(place_holder: str) -> Any:
         else:
             path = raw_content
             default_val = None
+    else:
+        path = place_holder
+        default_val = None
 
-        return ConfigPropertyDescriptor(path, default_val)
+    # 3. Direct, eager lookup against the live dictionary
+    keys = path.split(".")
+    current_node = settings.framework_config
 
-    # Fallback support if they provide a raw dot-notation string without wrapper syntax
-    return ConfigPropertyDescriptor(place_holder)
+    for key in keys:
+        if isinstance(current_node, dict) and key in current_node:
+            current_node = current_node[key]
+        else:
+            return default_val
 
+    return current_node
 
 
 def get_collection(collection_name: str):
