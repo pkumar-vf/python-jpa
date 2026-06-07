@@ -11,9 +11,31 @@ from dotenv import load_dotenv
 # Load local .env variables into system memory at the very beginning
 load_dotenv()
 
-# Establish strict path routing based on your layout
-BASE_DIR = Path(__file__).resolve().parent.parent
-RESOURCES_DIR = BASE_DIR / "resources"
+
+def _detect_resources_dir() -> Path:
+    """
+    Implicitly finds the resources directory by checking the execution context (CWD).
+    Falls back to environment variables or the file location if not found.
+    """
+    # 1. Honor explicit override if provided
+    if env_root := os.getenv("PROJECT_ROOT"):
+        return Path(env_root) / "resources"
+
+    # 2. Implicit Discovery: Look at where the application is being executed from
+    cwd = Path.cwd()
+    for parent in [cwd, *cwd.parents]:
+        candidate_dir = parent / "resources"
+        # Verify this directory exists and contains your master settings file
+        if candidate_dir.is_dir() and (candidate_dir / "settings.yml").exists():
+            return candidate_dir
+
+    # 3. Fallback to package-relative directory if all else fails
+    return Path(__file__).resolve().parent / "resources"
+
+
+# Establish dynamic path routing based on runtime context
+RESOURCES_DIR = _detect_resources_dir()
+BASE_DIR = RESOURCES_DIR.parent
 FRAMEWORK_LOGGER_NAME = "framework"
 DEFAULT_FRAMEWORK_LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 DEFAULT_FRAMEWORK_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
