@@ -109,7 +109,6 @@ class ConfigSettings:
         framework_config = _as_dict(self._config_data.get("framework"), context=f"{profile_filename}.framework")
         framework_logging_config = _as_dict(framework_config.get("logging"),
                                             context=f"{profile_filename}.framework.logging")
-        self.framework_config = framework_config
         self.framework_logs_enabled = bool(framework_logging_config.get("enabled", False))
         self.framework_log_level = _parse_log_level(str(framework_logging_config.get("level", "INFO")))
         self.framework_log_format = str(framework_logging_config.get("format", DEFAULT_FRAMEWORK_LOG_FORMAT))
@@ -184,7 +183,7 @@ def value(place_holder: str) -> Any:
 
     # 3. Direct, eager lookup against the live dictionary
     keys = path.split(".")
-    current_node = settings.framework_config
+    current_node = settings._config_data
 
     for key in keys:
         if isinstance(current_node, dict) and key in current_node:
