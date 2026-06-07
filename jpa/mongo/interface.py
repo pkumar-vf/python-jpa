@@ -5,7 +5,7 @@ from typing import Any, Callable, ClassVar, Generic, TypeVar, cast, get_args, ge
 from pydantic import BaseModel
 from bson import ObjectId, errors
 
-from config import get_collection, get_framework_logger
+from jpa.config import get_collection, get_framework_logger
 
 T = TypeVar("T", bound=BaseModel)
 F = TypeVar("F", bound=Callable[..., Any])
