@@ -14,5 +14,4 @@ authors = [
 ]
 
 [tool.setuptools]
-packages = ["mongo"]
-py-modules = ["config"]
+packages = ["app"]
