@@ -1,7 +1,6 @@
 import inspect
 import re
 from typing import Any, Callable, ClassVar, Generic, TypeVar, cast, get_args, get_origin, get_type_hints, List
-from unittest import result
 
 from pydantic import BaseModel, ConfigDict
 from bson import ObjectId, errors
@@ -12,7 +11,7 @@ T = TypeVar("T", bound=BaseModel)
 F = TypeVar("F", bound=Callable[..., Any])
 framework_logger = get_framework_logger("repository")
 
-DEFAULT_DOCUMENT_CONFIG = dict[str, Any] = {
+DEFAULT_DOCUMENT_CONFIG: dict[str, Any] = {
     "populate_by_name": True,
     "arbitrary_types_allowed": True,
     "json_encoders": {ObjectId: str}
@@ -321,6 +320,6 @@ class IRepository(Generic[T], metaclass=RepositoryMeta):
         query_result = self.collection.delete_one({"_id": ObjectId(resource_id)})
         return query_result.deleted_count > 0
 
-    def update(self, resource_id: str, data:dict):
+    def update(self, resource_id: str, data: dict):
         query_result = self.collection.update_one({"_id": ObjectId(resource_id)}, {"$set": data})
         return query_result.modified_count > 0
