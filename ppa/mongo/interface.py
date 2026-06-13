@@ -37,20 +37,6 @@ def document(name: str) -> Callable[[type[DocumentModel]], type[DocumentModel]]:
 
     def decorator(cls):
         cls.__collection_name__ = name
-        current_cfs = dict(getattr(cls, "model_config", {}) or {})
-        current_encoders = dict(current_cfs.get("json_encoders", {}) or {})
-        merged_encoders = {
-            **DEFAULT_DOCUMENT_CONFIG["json_encoders"],
-            **current_encoders
-        }
-        merged_cfs = {
-            **DEFAULT_DOCUMENT_CONFIG,
-            **current_cfs,
-            "json_encoders": merged_encoders,
-        }
-        cls.model_config = ConfigDict(**merged_cfs)
-        if hasattr(cls, "model_rebuild"):
-            cls.model_rebuild(force=True)
         return cls
 
     return decorator
