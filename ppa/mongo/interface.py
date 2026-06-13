@@ -49,6 +49,16 @@ class DocumentList(list[T]):
     def model_dump(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [doc.model_dump(**kwargs) for doc in self]
 
+    @classmethod
+    def model_validate(cls, obj: list[Any], entity_cls: type[T]) -> 'DocumentList[T]':
+        """
+        Validates a list of raw dictionaries and returns a populated DocumentList.
+        We pass `entity_cls` because generic type T is erased at runtime.
+        """
+        if not isinstance(obj, list) and not hasattr(obj, "__iter__"):
+            raise ValueError("Data provided to DocumentList.model_validate must be iterable.")
+
+        return cls([entity_cls.model_validate(item) for item in obj])
 
 def query(definition: dict[str, Any]) -> Callable[[F], F]:
     """Annotation to specify a custom MongoDB query template."""
