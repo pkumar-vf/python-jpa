@@ -1,45 +1,57 @@
 import inspect
 import re
-from typing import Any, Callable, ClassVar, Generic, TypeVar, cast, get_args, get_origin, get_type_hints, List
+from typing import Any, Callable, ClassVar, Generic, Optional, TypeVar, cast, get_args, get_origin, get_type_hints, List
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from bson import ObjectId, errors
 
 from ppa.config import get_collection, get_framework_logger
-from ppa.mongo import DocumentModel
 
-T = TypeVar("T", bound=DocumentModel)
+T = TypeVar("T", bound='DocumentModel')
 F = TypeVar("F", bound=Callable[..., Any])
 framework_logger = get_framework_logger("repository")
 
-DEFAULT_DOCUMENT_CONFIG: dict[str, Any] = {
-    "populate_by_name": True,
-    "arbitrary_types_allowed": True,
-    "json_encoders": {ObjectId: str}
-}
-
 
 class DocumentModel(BaseModel):
+    """
+    Base class for all MongoDB models.
+    Inherits default configurations and the standard MongoDB _id mapping.
+    """
     __collection_name__: ClassVar[str]
+
+    # Automatically inherited and merged by child models
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+
+    # Universal MongoDB _id mapping
+    id: Optional[ObjectId] = Field(default=None, alias="_id")
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """
+        Overrides default Pydantic dump to ensure MongoDB compatibility.
+        Defaults to excluding None values and using aliases (id -> _id).
+        """
+        kwargs.setdefault("exclude_none", True)
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(**kwargs)
 
 
 def query(definition: dict[str, Any]) -> Callable[[F], F]:
     """Annotation to specify a custom MongoDB query template."""
-
     def decorator(func: F) -> F:
         func.__query_template__ = definition
         return func
-
     return decorator
 
 
 def document(name: str) -> Callable[[type[DocumentModel]], type[DocumentModel]]:
     """Class decorator to bind a Pydantic model to a MongoDB collection."""
-
     def decorator(cls):
         cls.__collection_name__ = name
         return cls
-
     return decorator
 
 
@@ -72,7 +84,7 @@ class RepositoryMeta(type):
                 is_convention = re.match(r"(find_by|find_all_by|exists_by|count_by)_(.*)", attr_name)
 
                 if not is_convention:
-                    framework_logger.info(f"Convention does not exist for {attr_name}, relying on user implementation")
+                    framework_logger.info("Convention does not exist, relying on user implementation")
                     continue
 
                 if query_template or is_convention is not None:
@@ -104,36 +116,6 @@ class RepositoryMeta(type):
                 if args and issubclass(args[0], BaseModel):
                     return args[0]
         return None
-
-    @staticmethod
-    def _to_object_id(value: Any) -> Any:
-        """Convert a string to ObjectId if possible; leave other types untouched."""
-        if isinstance(value, ObjectId):
-            return value
-        if isinstance(value, str):
-            try:
-                return ObjectId(value)
-            except Exception:
-                return value
-        return value
-
-    @staticmethod
-    def _convert_query_ids(query_dict: Any) -> Any:
-        """
-        Walk a query structure and convert any top-level or nested '_id' keys
-        whose values are strings into ObjectId instances.
-        """
-        if isinstance(query_dict, dict):
-            new = {}
-            for k, v in query_dict.items():
-                if k == "_id":
-                    new[k] = RepositoryMeta._to_object_id(v)
-                else:
-                    new[k] = RepositoryMeta._convert_query_ids(v)
-            return new
-        if isinstance(query_dict, list):
-            return [RepositoryMeta._convert_query_ids(item) for item in query_dict]
-        return query_dict
 
     @staticmethod
     def _build_annotated_method(
@@ -169,7 +151,6 @@ class RepositoryMeta(type):
                 return node
 
             evaluated_query = cast(dict[str, Any], substitute_placeholders(template))
-            evaluated_query = mcs._convert_query_ids(evaluated_query)
 
             framework_logger.debug(
                 "Invoked custom query %s.%s with args=%s kwargs=%s",
@@ -196,7 +177,7 @@ class RepositoryMeta(type):
     ) -> Callable[..., Any]:
         prefix, field_name = match.groups()
 
-        if field_name not in valid_fields and field_name != "id":
+        if field_name not in valid_fields:
             raise TypeError(
                 f"RepositoryDefinitionError: Field '{field_name}' does not exist on model {entity_cls.__name__}")
 
@@ -209,8 +190,12 @@ class RepositoryMeta(type):
             bound.apply_defaults()
             actual_value = bound.arguments.get(param_names[0]) if param_names else None
 
-            if mongo_field == "_id":
-                actual_value = mcs._to_object_id(actual_value)
+            # Convert string IDs to ObjectId if querying against _id
+            if mongo_field == "_id" and isinstance(actual_value, str):
+                try:
+                    actual_value = ObjectId(actual_value)
+                except errors.InvalidId:
+                    pass
 
             query_dict: dict[str, Any] = {mongo_field: actual_value}
 
@@ -247,14 +232,6 @@ def cast_primary_keys(node: Any, current_field: str | None = None) -> Any:
     return node
 
 
-def sanitize_doc(doc: Any) -> Any:
-    """Helper to cleanly stringify MongoDB _id types for Pydantic loading."""
-    if doc and "_id" in doc:
-        doc = dict(doc)
-        doc["_id"] = str(doc["_id"])
-    return doc
-
-
 def execute_dynamic_query(
         collection: Any,
         query_dict: dict[str, Any],
@@ -281,10 +258,10 @@ def execute_dynamic_query(
 
     if origin_type is list:
         cursor = collection.find(processed_query)
-        return [entity_cls.model_validate(sanitize_doc(doc)) for doc in cursor]
+        return [entity_cls.model_validate(doc) for doc in cursor]
 
     doc = collection.find_one(processed_query)
-    return entity_cls.model_validate(sanitize_doc(doc)) if doc else None
+    return entity_cls.model_validate(doc) if doc else None
 
 
 class IRepository(Generic[T], metaclass=RepositoryMeta):
@@ -304,33 +281,30 @@ class IRepository(Generic[T], metaclass=RepositoryMeta):
         )
 
     def save(self, pyd_model: T) -> str:
-        # CRITICAL UPDATE: Add by_alias=True so 'id' becomes '_id' in MongoDB
+        # Base model override handles exclude_none and by_alias automatically
         data = pyd_model.model_dump()
         inserted_data = self.collection.insert_one(data)
         return str(inserted_data.inserted_id)
 
     def save_all(self, pyd_models: List[T]) -> List[str]:
-        # CRITICAL UPDATE: Add by_alias=True
         data = [pyd_model.model_dump() for pyd_model in pyd_models]
         inserted_data = self.collection.insert_many(data)
         return [str(obj_id) for obj_id in inserted_data.inserted_ids]
 
     def find_all(self) -> list[T]:
         cursor = self.collection.find()
-        # UPDATED: Removed sanitize_doc assumption
         return [self._entity_cls.model_validate(doc) for doc in cursor]
 
     def find(self, query_dict: dict) -> T:
         data = self.collection.find_one(query_dict)
         if not data:
             raise ValueError("No data found")
-        # UPDATED: Removed sanitize_doc assumption
         return self._entity_cls.model_validate(data)
 
     def delete(self, resource_id: str) -> bool:
         query_result = self.collection.delete_one({"_id": ObjectId(resource_id)})
         return query_result.deleted_count > 0
 
-    def update(self, resource_id: str, data: dict):
+    def update(self, resource_id: str, data: dict) -> bool:
         query_result = self.collection.update_one({"_id": ObjectId(resource_id)}, {"$set": data})
         return query_result.modified_count > 0
